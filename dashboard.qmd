@@ -1,0 +1,357 @@
+---
+title: "Calidad de Agua de Ríos de Panamá"
+subtitle: "2002–2024 | Ministerio de Ambiente"
+format:
+  dashboard:
+    theme: cosmo
+    nav-buttons:
+      - icon: github
+        href: https://doi.org/10.5281/zenodo.18972707
+        aria-label: Zenodo
+    logo: ""
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(leaflet)
+library(plotly)
+library(DT)
+
+df <- read_csv("https://zenodo.org/records/18972707/files/laboratorio_tidy.csv", show_col_types = FALSE) |>
+  mutate(
+    date_parsed = as.Date(date),
+    anio        = as.integer(anio),
+    ica_cat = case_when(
+      ICA >= 90              ~ "Excelente",
+      ICA >= 70              ~ "Buena",
+      ICA >= 50              ~ "Regular",
+      ICA >= 25              ~ "Mala",
+      !is.na(ICA)            ~ "Muy mala",
+      TRUE                   ~ NA_character_
+    ),
+    ica_cat = factor(ica_cat,
+                     levels = c("Excelente","Buena","Regular","Mala","Muy mala"))
+  )
+
+ICA_COLORS <- c(
+  "Excelente" = "#1a9850",
+  "Buena"     = "#91cf60",
+  "Regular"   = "#fee08b",
+  "Mala"      = "#fc8d59",
+  "Muy mala"  = "#d73027"
+)
+```
+
+# Resumen
+
+## Row {height=20%}
+
+```{r}
+#| content: valuebox
+#| title: "Observaciones"
+list(icon = "database", color = "primary", value = scales::comma(nrow(df)))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Estaciones"
+list(icon = "geo-alt", color = "info",
+     value = scales::comma(n_distinct(df$station_id)))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Provincias / Comarcas"
+list(icon = "map", color = "secondary", value = n_distinct(df$provincia))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Años de registro"
+list(icon = "calendar", color = "success",
+     value = paste0(min(df$anio, na.rm=TRUE),"–",max(df$anio, na.rm=TRUE)))
+```
+
+```{r}
+#| content: valuebox
+#| title: "ICA mediano"
+list(icon = "droplet", color = "warning",
+     value = round(median(df$ICA, na.rm=TRUE), 1))
+```
+
+## Row {height=80%}
+
+### Column {width=55%}
+
+```{r}
+#| title: "Mapa de estaciones (color = ICA mediano)"
+est <- df |>
+  filter(!is.na(lat), !is.na(lon)) |>
+  group_by(provincia, station_id, station_name, lat, lon) |>
+  summarise(
+    n_obs   = n(),
+    ica_med = round(median(ICA, na.rm=TRUE), 1),
+    cf_med  = round(median(coliformes_fecales, na.rm=TRUE)),
+    .groups = "drop"
+  ) |>
+  mutate(ica_cat = case_when(
+    ica_med >= 90 ~ "Excelente", ica_med >= 70 ~ "Buena",
+    ica_med >= 50 ~ "Regular",   ica_med >= 25 ~ "Mala",
+    !is.na(ica_med) ~ "Muy mala", TRUE ~ "Sin ICA"
+  ))
+
+pal_map <- colorFactor(
+  palette = c("#1a9850","#91cf60","#fee08b","#fc8d59","#d73027","#aaaaaa"),
+  levels  = c("Excelente","Buena","Regular","Mala","Muy mala","Sin ICA")
+)
+
+leaflet(est) |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  addCircleMarkers(
+    lng = ~lon, lat = ~lat,
+    radius = ~pmin(5 + n_obs/25, 14),
+    color  = ~pal_map(ica_cat), fillOpacity = 0.85, stroke = FALSE,
+    popup  = ~paste0(
+      "<b>", station_name, "</b><br>",
+      "<i>", provincia, "</i><br>",
+      "Observaciones: <b>", n_obs, "</b><br>",
+      "ICA mediano: <b>", ica_med, "</b><br>",
+      "Cf. fecales mediano: <b>",
+      scales::comma(cf_med, accuracy=1), "</b> UFC/100mL"
+    )
+  ) |>
+  addLegend("bottomright", pal = pal_map, values = ~ica_cat,
+            title = "Categoría ICA", opacity = 0.9)
+```
+
+### Column {width=45%}
+
+```{r}
+#| title: "ICA por provincia"
+df |>
+  filter(!is.na(ICA)) |>
+  mutate(provincia = fct_reorder(provincia, ICA, median)) |>
+  plot_ly(x = ~ICA, y = ~provincia, type = "box",
+          color = ~provincia, colors = "Set3",
+          showlegend = FALSE,
+          hovertemplate = "%{x:.1f}<extra>%{y}</extra>") |>
+  layout(
+    xaxis = list(title = "ICA", range = c(0,100)),
+    yaxis = list(title = ""),
+    margin = list(l = 160)
+  )
+```
+
+```{r}
+#| title: "Distribución de categorías ICA"
+df |>
+  filter(!is.na(ica_cat)) |>
+  count(ica_cat) |>
+  mutate(pct = round(100 * n / sum(n), 1)) |>
+  plot_ly(labels = ~ica_cat, values = ~n,
+          type = "pie",
+          marker = list(colors = unname(ICA_COLORS[levels(df$ica_cat)])),
+          textinfo = "label+percent",
+          hovertemplate = "%{label}: %{value} obs (%{percent})<extra></extra>") |>
+  layout(showlegend = FALSE)
+```
+
+# Tendencias
+
+## Row
+
+### Column {width=60%}
+
+```{r}
+#| title: "ICA anual (mediana ± IQR)"
+anual <- df |>
+  filter(!is.na(ICA), !is.na(anio)) |>
+  group_by(anio) |>
+  summarise(med = median(ICA), q25 = quantile(ICA,.25),
+            q75 = quantile(ICA,.75), n = n(), .groups="drop")
+
+plot_ly(anual) |>
+  add_ribbons(x=~anio, ymin=~q25, ymax=~q75,
+              fillcolor="rgba(44,123,182,0.2)", line=list(color="transparent"),
+              name="IQR", showlegend=TRUE) |>
+  add_lines(x=~anio, y=~med, line=list(color="#2c7bb6",width=2.5),
+            name="Mediana") |>
+  add_markers(x=~anio, y=~med, marker=list(color="#2c7bb6",size=7),
+              text=~paste0("n=",n), hovertemplate="%{y:.1f} (%{text})<extra>%{x}</extra>",
+              name="") |>
+  layout(xaxis=list(title="Año", dtick=2),
+         yaxis=list(title="ICA", range=c(0,100)),
+         legend=list(orientation="h", y=-0.2))
+```
+
+### Column {width=40%}
+
+```{r}
+#| title: "Observaciones por año y temporada"
+df |>
+  filter(!is.na(anio)) |>
+  mutate(temporada = str_to_title(str_squish(temporada))) |>
+  filter(temporada %in% c("Seca","Lluviosa")) |>
+  count(anio, temporada) |>
+  plot_ly(x=~anio, y=~n, color=~temporada,
+          colors=c("Lluviosa"="#1f78b4","Seca"="#ff7f00"),
+          type="bar", barmode="stack",
+          hovertemplate="%{y} obs<extra>%{fullData.name} %{x}</extra>") |>
+  layout(xaxis=list(title="Año",dtick=2),
+         yaxis=list(title="Observaciones"),
+         legend=list(title=list(text="Temporada")))
+```
+
+```{r}
+#| title: "Parámetros disponibles por año"
+params_long <- df |>
+  filter(!is.na(anio)) |>
+  select(anio, pH, OD_mgL, DBO_mgL, coliformes_fecales, NO3_mgL, ICA) |>
+  pivot_longer(-anio, names_to="param", values_to="val") |>
+  filter(!is.na(val)) |>
+  count(anio, param)
+
+plot_ly(params_long, x=~anio, y=~n, color=~param,
+        type="scatter", mode="lines+markers",
+        hovertemplate="%{y}<extra>%{fullData.name} %{x}</extra>") |>
+  layout(xaxis=list(title="Año",dtick=2),
+         yaxis=list(title="n con datos"),
+         legend=list(title=list(text="Parámetro")))
+```
+
+# Parámetros
+
+## Row {.tabset}
+
+### Oxígeno Disuelto
+
+```{r}
+od <- df |> filter(!is.na(OD_mgL))
+plot_ly(od, x=~OD_mgL, type="histogram", nbinsx=40,
+        marker=list(color="#2c7bb6",line=list(color="white",width=0.5)),
+        name="") |>
+  layout(xaxis=list(title="OD (mg/L)"),
+         yaxis=list(title="Frecuencia"),
+         title=paste0("Oxígeno Disuelto (n=",nrow(od),")"))
+```
+
+### DBO₅
+
+```{r}
+dbo <- df |> filter(!is.na(DBO_mgL), DBO_mgL <= 50)
+plot_ly(dbo, x=~DBO_mgL, type="histogram", nbinsx=40,
+        marker=list(color="#d95f02")) |>
+  layout(xaxis=list(title="DBO₅ (mg/L, recortado a 50)"),
+         yaxis=list(title="Frecuencia"),
+         title=paste0("Demanda Bioquímica de Oxígeno (n=",nrow(dbo),
+                      " de ",sum(!is.na(df$DBO_mgL)),")"))
+```
+
+### Coliformes fecales
+
+```{r}
+cf <- df |> filter(!is.na(coliformes_fecales), coliformes_fecales > 0)
+plot_ly(cf, x=~log10(coliformes_fecales), type="histogram", nbinsx=40,
+        marker=list(color="#e6550d")) |>
+  layout(xaxis=list(title="log₁₀(Col. fecales)", dtick=1,
+                    ticktext=c("1","10","100","1k","10k","100k","1M","10M","100M"),
+                    tickvals=0:8),
+         yaxis=list(title="Frecuencia"),
+         title=paste0("Coliformes fecales (n=",nrow(cf),")"))
+```
+
+### Nitratos
+
+```{r}
+no3 <- df |> filter(!is.na(NO3_mgL), NO3_mgL <= 20)
+plot_ly(no3, x=~NO3_mgL, type="histogram", nbinsx=40,
+        marker=list(color="#756bb1")) |>
+  layout(xaxis=list(title="NO₃ (mg/L, recortado a 20)"),
+         yaxis=list(title="Frecuencia"),
+         title=paste0("Nitratos (n=",nrow(no3)," de ",sum(!is.na(df$NO3_mgL)),")"))
+```
+
+# Tabla
+
+```{r}
+df |>
+  filter(!is.na(date)) |>
+  select(provincia, station_name, rio_cuenca, date, temporada,
+         pH, temp_C, OD_mgL, DBO_mgL, coliformes_fecales, coliformes_totales,
+         ICA, observaciones) |>
+  mutate(across(where(is.numeric), ~round(., 2))) |>
+  datatable(
+    filter  = "top",
+    options = list(
+      pageLength = 20,
+      scrollX    = TRUE,
+      dom        = "lfrtip",
+      columnDefs = list(list(width="120px", targets=c(2,3)))
+    ),
+    rownames  = FALSE,
+    colnames  = c("Provincia","Estación","Río/Cuenca","Fecha","Temporada",
+                  "pH","T °C","OD mg/L","DBO mg/L","CF UFC","CT UFC",
+                  "ICA","Observaciones")
+  )
+```
+
+# Acerca de
+
+## Row
+
+### Column {width=60%}
+
+**Dataset**
+
+| | |
+|---|---|
+| Título | Calidad de agua de ríos de Panamá: Compendio de laboratorio 2002–2024 |
+| Autor | Santamaría, Andrés — Universidad Tecnológica de Panamá |
+| DOI | <https://doi.org/10.5281/zenodo.18945787> |
+| Licencia | CC BY 4.0 |
+| Filas | 4,942 |
+| Columnas | 53 |
+| Período | 2002–2024 |
+| Cobertura | 10 provincias + 3 comarcas |
+
+**Fuente original**
+
+Ministerio de Ambiente de Panamá. (2025). *Registros históricos de índice de calidad de agua 2022–2023*. SINIA. <https://sinia.gob.pa>
+
+**Script de procesamiento**
+
+El script `limpiar_laboratorio_v5.R` convierte 13 archivos Excel (formato wide,
+uno por provincia) al CSV tidy utilizado en este dashboard. Aplica 23 correcciones
+documentadas incluyendo: extracción de flags de censura (`<LD`, `<`, `>`, `*`),
+corrección de fechas, conversión UTM→WGS84 con detección automática de zona
+(17N/18N), y 10 banderas de calidad en la columna `observaciones`.
+
+### Column {width=40%}
+
+**Parámetros incluidos**
+
+| Parámetro | Unidad | n |
+|-----------|--------|---|
+| pH | — | 4,912 |
+| Temperatura | °C | 4,915 |
+| Conductividad | mS/m | 4,442 |
+| Turbidez | NTU | 4,293 |
+| OD | mg/L | 4,772 |
+| OD saturación | mg/L | 4,600 |
+| OD % sat | % | 4,719 |
+| DBO₅ | mg/L | 4,543 |
+| Sólidos totales | mg/L | 4,717 |
+| Sólidos susp. | mg/L | 4,648 |
+| Sólidos dis. | mg/L | 4,150 |
+| NO₃ | mg/L | 4,722 |
+| PO₄ | mg/L | 3,988 |
+| PT | mg/L | 625 |
+| SO₄ | mg/L | 32 |
+| Col. fecales | UFC/NMP | 4,304 |
+| Col. totales | UFC/NMP | 4,745 |
+| E. coli | UFC | 502 |
+| ICA | 0–100 | 4,765 |

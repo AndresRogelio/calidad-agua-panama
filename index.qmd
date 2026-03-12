@@ -2,8 +2,9 @@
 title: "Calidad de Agua de Ríos de Panamá"
 subtitle: "2002–2024 | Ministerio de Ambiente"
 format:
-  dashboard:
+dashboard:
     theme: cosmo
+    embed-resources: true
     nav-buttons:
       - icon: github
         href: https://doi.org/10.5281/zenodo.18972707

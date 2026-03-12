@@ -27,13 +27,12 @@ jobs:
             leaflet
             plotly
             DT
-            readr
 
       - name: Setup Quarto
         uses: quarto-dev/quarto-actions/setup@v2
 
       - name: Render dashboard
-        run: quarto render dashboard.qmd --to dashboard
+        run: quarto render index.qmd
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4

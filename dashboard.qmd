@@ -287,10 +287,11 @@ df |>
   datatable(
     filter  = "top",
     options = list(
-      pageLength = 20,
-      scrollX    = TRUE,
-      dom        = "lfrtip",
-      columnDefs = list(list(width="120px", targets=c(2,3)))
+      pageLength  = 20,
+      scrollX     = TRUE,
+      dom         = "lfrtip",
+      fixedHeader = FALSE,
+      columnDefs  = list(list(width="120px", targets=c(2,3)))
     ),
     rownames  = FALSE,
     colnames  = c("Provincia","Estación","Río/Cuenca","Fecha","Temporada",
@@ -311,7 +312,7 @@ df |>
 |---|---|
 | Título | Calidad de agua de ríos de Panamá: Compendio de laboratorio 2002–2024 |
 | Autor | Santamaría, Andrés — Universidad Tecnológica de Panamá |
-| DOI | <https://doi.org/10.5281/zenodo.18945787> |
+| DOI | <https://doi.org/10.5281/zenodo.18972707> |
 | Licencia | CC BY 4.0 |
 | Filas | 4,942 |
 | Columnas | 53 |
